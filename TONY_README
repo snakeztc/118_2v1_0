@@ -1,0 +1,22 @@
+Hi Tony
+
+There are the three things you need to do:
+1. Implement error detection mechanism in global.cpp, declared in global.h;
+      bool notCorrupted(unsigned short expectedChecksum, char* msg);
+2. Finish reliable data transfer protocol, fill out the TODO sections in 
+      sender.cpp and receiver.cpp.
+3. Read channel.h carefully(because it's changed), and Ask any questions you have.
+
+Do not change channel.h, channel.cpp. If you need to test out the
+code, write small programs in test.cpp and compile with command:
+"make test"
+
+Sender only serves files in senderRoot, and receiver only puts files into receiverRoot.
+We assume the user won't type ".." just as in project 1.
+
+Here are some of my questions. Post all your questions in the following section:
+--- START
+1. Should sender be a daemon?
+2. Timed wait?
+3. Should host name only be IP address (dotted)?
+--- END

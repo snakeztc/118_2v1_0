@@ -1,0 +1,5 @@
+struct header {
+    int            sequence;    // 4
+    PacketType     type;        // 4
+    unsigned short checksum;    // 2
+};                              // 12 total
