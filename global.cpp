@@ -31,6 +31,9 @@ string getHeaderTypeName(PacketType t)
         case BAD:
             return string("BAD");
             break;
+        case SYN:
+            return string("SYN");
+            break;
         default:
             return string("NOT_RECOGNIZED");
             break;
@@ -45,6 +48,7 @@ void echoHeader(struct header *h)
     cerr<< "checksum: ";
     fprintf(stderr,"%x",h->checksum);
     cerr<< endl;
+    cerr<< "Window size is: " << h->windowSize << endl;
     cerr<< "---- END HEADER ----" << endl;
 }
 

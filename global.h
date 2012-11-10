@@ -26,6 +26,7 @@ enum PacketType {
     DAT,                // data
     FIN,                // finalize
     BAD,                // bad request
+    SYN,                // synchronize 
 };
 
 // Message header struct
@@ -35,7 +36,8 @@ struct header {
     int            sequence;    // 4
     PacketType     type;        // 4
     unsigned short checksum;    // 2
-};                              // 12 total
+    unsigned short windowSize;   // 2
+};                              // 14 total
 
 // Return type name
 std::string getHeaderTypeName(PacketType t);
@@ -48,6 +50,9 @@ void fillHeaderStr(char* hdstr, const struct header* hdptr);
 
 // Convert the headerStr produced by fillHeaderStr and fill the struct hdPtr.
 void fillHeader(const char* hdstr, struct header* hdptr);
+
+// Provide a function caculate a checksum from n bits of data
+unsigned short CheckSum(unsigned short *buffer, int size);
 
 // FIXME: return true if the checksum of msg is equal to expected checksum;
 // false otherwise.
