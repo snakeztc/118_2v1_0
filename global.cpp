@@ -83,25 +83,26 @@ void fillHeader(const char* hdstr, struct header* hdptr)
 }
 
 //caculate a 16 bit long checksum 
-unsigned short CheckSum(unsigned short *buffer, int size)
+unsigned short CheckSum(const void *buffer, int size)
 {
+    const unsigned short *buf = (const unsigned short*)buffer;
     unsigned long cksum=0;
     while(size >1)
     {
-        cksum+=*buffer++;
+        cksum+=*buf++;
         size -=sizeof(unsigned short);
     }
     if(size)
-        cksum += *(unsigned char*)buffer;
+        cksum += *(const unsigned char*)buf;
     
     cksum = (cksum >> 16) + (cksum & 0xffff);
     cksum += (cksum >>16);
     return (unsigned short)(~cksum);
 }
 
-// FIXME: return true if the checksum of msg is equal to expected checksum;
+// return true if the checksum of msg is equal to expected checksum;
 // false otherwise.
-bool notCorrupted(unsigned short expectedChecksum, char* msg)
+bool corrupted(unsigned short expectedChecksum, char* msg, int size)
 {
     if (msg == NULL)
     {
@@ -109,6 +110,14 @@ bool notCorrupted(unsigned short expectedChecksum, char* msg)
         exit(1);
     }
     
+    if (size <= 0)
+    {
+        fprintf(stderr,"notCorrupted: non-positive size\n");
+        exit(1);
+    }
     
-    return true;
+    unsigned short cksum = CheckSum((unsigned short*)msg,size);
+    if (cksum != expectedChecksum)
+        return true;   
+    return false;
 }

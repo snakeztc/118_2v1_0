@@ -24,9 +24,8 @@ bool threeWayHandShake(Channel &ch, string filename)
     struct header h1;
     h1.sequence = -1;
     h1.type = GET;
-    h1.checksum = 0xdeed;
+    h1.checksum = CheckSum(filename.c_str(),filename.length()+1);
     h1.windowSize = MAX_WINDOW_SIZE;
-    
 
     // #1 TWH: receiver sends file request to the sender
     ch.Csend(NULL, 0, &h);
@@ -114,12 +113,21 @@ int main(int argc, char* argv[])
         memset(buf,0,MAX_PAYLOAD_SIZE);
         ch.Crecv(buf,MAX_PAYLOAD_SIZE,&h); 
         if (h.type == DAT) {
+           //save data
            data.push_back(buf);
+           cerr << "Receiver: get packet " << h.sequence << endl;          
+
+           //send back ACK
+           h.type = ACK;
+           h.windowSize = MAX_WINDOW_SIZE;
+           h.checksum = 0xaaaa;
+           ch.Csend(NULL, 0, &h);
         } else if (h.type == BAD) {
             cerr << "Receiver: Bad Request" << endl;
             break;
         } //receive FIN Pacet, save file to root and quit
         else if (h.type == FIN) {
+            cerr << "Receiver: file transmission complete" << endl;
             ofstream outfile (filename.c_str());
             for (unsigned int i = 0; i < data.size(); i++)
             {
@@ -128,7 +136,7 @@ int main(int argc, char* argv[])
             break;
         }
      
-        echoHeader(&h);
+        //echoHeader(&h);
     }
 
     return 0;

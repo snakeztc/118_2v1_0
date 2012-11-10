@@ -52,10 +52,10 @@ void fillHeaderStr(char* hdstr, const struct header* hdptr);
 void fillHeader(const char* hdstr, struct header* hdptr);
 
 // Provide a function caculate a checksum from n bits of data
-unsigned short CheckSum(unsigned short *buffer, int size);
+unsigned short CheckSum(const void *buffer, int size);
 
-// FIXME: return true if the checksum of msg is equal to expected checksum;
-// false otherwise.
-bool notCorrupted(unsigned short expectedChecksum, char* msg);
+// Return true if the packet is corrupted, i.e., checksum of msg is not 
+// equal to the expected checksum; false otherwise.
+bool corrupted(unsigned short expectedChecksum, char* msg, int size);
 
 #endif

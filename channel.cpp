@@ -6,7 +6,7 @@ using namespace std;
 static float MAXRATE = 0.40;
 
 Channel::Channel(PacketLossRate l, PacketCorruptRate c):socketfd(-1),addressValid(false),
-portBinded(false), address_len(sizeof(address)), sequence(0)
+portBinded(false), address_len(sizeof(address))
 {
     if(l <= MAXRATE && l >= 0.0) 
         pl = l;
@@ -26,7 +26,7 @@ portBinded(false), address_len(sizeof(address)), sequence(0)
 }
 
 Channel::Channel():pl(0),pc(0),socketfd(-1),addressValid(false),portBinded(false),
-address_len(sizeof(address)),sequence(0)
+address_len(sizeof(address))
 {
     memset(&address,0,sizeof(address));
     memset(&selfaddress,0,sizeof(address));
@@ -138,7 +138,12 @@ ssize_t Channel::Csend(const char* message, size_t length, struct header *hptr)
     ssize_t n = write(socketfd, hdstr, length+offset);
 
     delete []hdstr;
-    return n-offset;
+    if (n>offset)
+        return n-offset;
+    else if (n<0)
+        return n;
+    else
+        return 0;
 }
 
 ssize_t Channel::Crecv(char* buffer, size_t length, struct header *hptr)
@@ -161,6 +166,7 @@ ssize_t Channel::Crecv(char* buffer, size_t length, struct header *hptr)
     if (r > 0.0 && r < pc)
     {
         // does not modify buffer and hptr
+        fprintf(stderr,"Crecv: packet corrupted(simulated)\n");
         return -2;
     }
 
@@ -179,11 +185,21 @@ ssize_t Channel::Crecv(char* buffer, size_t length, struct header *hptr)
     if (n<offset)
     {
         fprintf(stderr,"Crecv: can't strip header\n");
+        delete []local;
         return -1;
     }
-    
-    // FIXME: checksum
-
+#ifdef CHECKSUM
+    // detect packet corruption
+    if(n>offset) {
+        unsigned short expectedChecksum = ((struct header*)local)->checksum;
+        if(corrupted(expectedChecksum,local+offset,n-offset))
+        {
+            fprintf(stderr,"Crecv: packet corrupted\n");
+            delete []local;
+            return -2;
+        }
+    }
+#endif
     // fill buffer
     memcpy(buffer,local+offset,n-offset);
     
@@ -221,6 +237,7 @@ ssize_t Channel::Crecvfrom(char* buffer, size_t length, struct header *hptr)
     if (r > 0.0 && r < pc)
     {
         // does not modify buffer and hptr
+        fprintf(stderr,"Crecvfrom: packet corrupted(simulated)\n");
         return -2;
     }
 
@@ -243,11 +260,21 @@ ssize_t Channel::Crecvfrom(char* buffer, size_t length, struct header *hptr)
     if (n<offset)
     {
         fprintf(stderr,"Crecvfrom: can't strip header\n");
+        delete []local;
         return -1;
     }
-
-    // FIXME:checksum
-    
+#ifdef CHECKSUM
+    // detect packet corruption if there is content in the buffer
+    if(n-offset > 0) {
+        unsigned short expectedChecksum = ((struct header*)local)->checksum;
+        if(corrupted(expectedChecksum,local+offset,n-offset))
+        {
+            fprintf(stderr,"Crecvfrom: packet corrupted\n");
+            delete []local;
+            return -2;
+        }
+    }
+#endif
     // fill buffer
     memcpy(buffer,local+offset,n-offset);
     
@@ -263,10 +290,45 @@ ssize_t Channel::Crecvfrom(char* buffer, size_t length, struct header *hptr)
     if(n>0) {
         char* ip = inet_ntoa(client.sin_addr);
         unsigned short port = ntohs(client.sin_port);
-        fprintf(stderr,"Client IP: %s, port: %hu\n",ip,port);
+        fprintf(stdout,"Client IP: %s, port: %hu\n",ip,port);
         setupAddress(ip,port);
     }
     
     return n-offset;
 }
+
+ssize_t Channel::CrecvTimeout(char* buffer, size_t length, 
+                         struct header *hptr, int msec)
+{
+    if (msec < 0)
+    {
+        fprintf(stderr,"CrecvTimeout: invalid timeout value\n");
+        exit(1);
+    }
+    if (!portBinded) {
+        fprintf(stderr,"CrecvTimeout: call bindPort first\n");
+        exit(1);
+    }
+
+    struct timeval timeout;    
+    int n;
+    fd_set set;
+
+    FD_ZERO(&set);
+    FD_SET(socketfd,&set);
+    
+    timeout.tv_sec = 0;   
+    timeout.tv_usec = msec;
+    n = select(1,&set,0,0,&timeout);
+    if(n!=0) {
+        return Crecv(buffer,length,hptr);
+    }
+    else
+    {
+	// FIXME: more information about timeout
+        fprintf(stdout,"timeout detected\n");
+        return -3;
+    }
+}
+
 

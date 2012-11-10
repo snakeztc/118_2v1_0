@@ -12,6 +12,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <string>
+#include <sys/time.h>
 
 enum FailMode
 {
@@ -70,6 +71,12 @@ public:
     // allowed to be NULL.
     ssize_t Crecvfrom(char* buffer, size_t length, struct header *hptr);
 
+    // provide the same functionality as Crecv, but returns -3 when
+    // timeout event happens; the allowed time is provided in milliseconds
+    // by the last argument.
+    ssize_t CrecvTimeout(char* buffer, size_t length, 
+                         struct header *hptr, int msec);
+
 private:
     // Try to open a UDP socket; fail the program on failure
     void openSocket();
@@ -85,8 +92,6 @@ private:
     // return address and self address
     socklen_t address_len;
     struct sockaddr_in address,selfaddress;
-
-    int sequence;
 };
 
 #endif

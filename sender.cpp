@@ -90,6 +90,7 @@ bool prepareForData(string fileName, vector<char*>& dataSequence)
     for (int i = 0; i < numberOfPacket; i++)
     {
         char *buf = new char[MAX_PAYLOAD_SIZE];
+        memset(buf, 0, MAX_PAYLOAD_SIZE);
         inFile.read(buf, MAX_PAYLOAD_SIZE);
         dataSequence.push_back(buf);
     }
@@ -102,7 +103,7 @@ bool prepareForData(string fileName, vector<char*>& dataSequence)
         dataSequence.push_back(buf);
     }
     inFile.close();
-    cerr << "Data Sequence generated with " << dataSequence.size() << " Packets" << endl;
+    cerr << "Data has " << dataSequence.size() << " Packets" << endl;
     return true;
 }
 
@@ -127,6 +128,7 @@ int main(int argc, char* argv[])
     }
 
     // Setup communication channel and bind port
+    // FIXME: do simulation later
     Channel ch;
     ch.bindPort(portNumber,FAILFAST);
 
@@ -157,13 +159,27 @@ int main(int argc, char* argv[])
     //send all packets of data in GBN fashion
     //establish reliable data transfer
     int numberOfPacket = data.size();
-    for (int i = 0; i < numberOfPacket; i++)
+    int ackedPtr = 0;
+    for (int i = 0; ackedPtr < numberOfPacket; i++)
     {
-        h.type = DAT;
-        h.checksum = 0xbbbb;
-        h.windowSize = windowSize;
-        h.sequence = i;
-        ch.Csend(data[i], MAX_PAYLOAD_SIZE, &h);
+        while (ackedPtr + windowSize <= i) {
+            char buf[MAX_PAYLOAD_SIZE];
+            memset(buf, 0, MAX_PAYLOAD_SIZE);
+            ch.Crecv(buf, MAX_PAYLOAD_SIZE, &h);
+            if (h.type == ACK && h.sequence == ackedPtr)
+            { 
+                cerr << "Sender: get ACK " << h.sequence << endl;
+	        ackedPtr++;
+            }
+        } 
+        if (i < numberOfPacket) {
+            h.type = DAT;
+            h.checksum = 0xbbbb;	// FIXME: use CheckSum
+            h.windowSize = windowSize;
+            h.sequence = i;
+            ch.Csend(data[i], MAX_PAYLOAD_SIZE, &h);
+            cerr << "Sender: send packet " << i << endl;
+        }
     }
 
     // file transmission complete: send FIN
@@ -173,5 +189,6 @@ int main(int argc, char* argv[])
     h.sequence = -1;
     ch.Csend(NULL, 0, &h);
 
+    //wait for FIN from receiver
     return 0;
 }
