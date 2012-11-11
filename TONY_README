@@ -23,4 +23,5 @@ Here are some of my questions. Post all your questions in the following section:
 
 parts not fully implemented
 1. checksum for packet that only has header					#DONE
-2. if the last FIN from receiver is lost, how long should I wait?
+2. if the last FIN from receiver is lost, how long should I wait?       #DONE when sender time out 3 times then assume 
+                                                                              receiver has finished file transimission
