@@ -2,6 +2,8 @@
 #include "global.h"
 using namespace std;
 
+#define CHECKSUM
+
 // Maximum allowed value for packet loss/corrupt rate
 static float MAXRATE = 0.40;
 
@@ -118,6 +120,7 @@ ssize_t Channel::Csend(const char* message, size_t length, struct header *hptr)
     float r = rand()*1.0/RAND_MAX;
     if (r > 0.0 && r < pl)
     {
+        fprintf(stderr, "Csend: simulated packet loss\n");
         return length;
     }
 
@@ -130,9 +133,15 @@ ssize_t Channel::Csend(const char* message, size_t length, struct header *hptr)
         exit(1);
     }
     
-    // fill the header string
+    // fill the packet with header and message
     fillHeaderStr(hdstr,hptr);
     memcpy(hdstr+offset,message,length);
+
+    // calculate checksum
+    unsigned short* ptr = &(((struct header*)hdstr)->checksum);
+    *ptr = 0;
+    unsigned short checksum = CheckSum(hdstr,length+offset);
+    *ptr = checksum;
 
     // write header string
     ssize_t n = write(socketfd, hdstr, length+offset);
@@ -190,14 +199,14 @@ ssize_t Channel::Crecv(char* buffer, size_t length, struct header *hptr)
     }
 #ifdef CHECKSUM
     // detect packet corruption
-    if(n>offset) {
-        unsigned short expectedChecksum = ((struct header*)local)->checksum;
-        if(corrupted(expectedChecksum,local+offset,n-offset))
-        {
-            fprintf(stderr,"Crecv: packet corrupted\n");
-            delete []local;
-            return -2;
-        }
+    unsigned short* ptr = &(((struct header*)local)->checksum);
+    unsigned short expectedChecksum = *ptr;
+    *ptr = 0;
+    if(corrupted(expectedChecksum,local,n))
+    {
+        fprintf(stderr,"Crecv: packet corrupted\n");
+        delete []local;
+        return -2;
     }
 #endif
     // fill buffer
@@ -264,15 +273,15 @@ ssize_t Channel::Crecvfrom(char* buffer, size_t length, struct header *hptr)
         return -1;
     }
 #ifdef CHECKSUM
-    // detect packet corruption if there is content in the buffer
-    if(n-offset > 0) {
-        unsigned short expectedChecksum = ((struct header*)local)->checksum;
-        if(corrupted(expectedChecksum,local+offset,n-offset))
-        {
-            fprintf(stderr,"Crecvfrom: packet corrupted\n");
-            delete []local;
-            return -2;
-        }
+    // detect packet corruption
+    unsigned short* ptr = &(((struct header*)local)->checksum);
+    unsigned short expectedChecksum = *ptr;
+    *ptr = 0;
+    if(corrupted(expectedChecksum,local,n))
+    {
+        fprintf(stderr,"Crecv: packet corrupted\n");
+        delete []local;
+        return -2;
     }
 #endif
     // fill buffer
@@ -298,9 +307,9 @@ ssize_t Channel::Crecvfrom(char* buffer, size_t length, struct header *hptr)
 }
 
 ssize_t Channel::CrecvTimeout(char* buffer, size_t length, 
-                         struct header *hptr, int msec)
+                         struct header *hptr, int usec)
 {
-    if (msec < 0)
+    if (usec < 0)
     {
         fprintf(stderr,"CrecvTimeout: invalid timeout value\n");
         exit(1);
@@ -311,22 +320,27 @@ ssize_t Channel::CrecvTimeout(char* buffer, size_t length,
     }
 
     struct timeval timeout;    
-    int n;
+    int sec = usec/1e6;
+    usec -= sec*1e6;
+
     fd_set set;
 
     FD_ZERO(&set);
     FD_SET(socketfd,&set);
     
-    timeout.tv_sec = 0;   
-    timeout.tv_usec = msec;
-    n = select(1,&set,0,0,&timeout);
-    if(n!=0) {
+    timeout.tv_sec = sec;   
+    timeout.tv_usec = usec;
+
+    int n = select(socketfd+1,&set,NULL,NULL,&timeout);
+
+    if(n != 0) 
+    {
         return Crecv(buffer,length,hptr);
     }
     else
     {
 	// FIXME: more information about timeout
-        fprintf(stdout,"timeout detected\n");
+        fprintf(stdout,"CrecvTimeout: timeout detected\n");
         return -3;
     }
 }

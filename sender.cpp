@@ -9,6 +9,7 @@
 using namespace std;
 
 const char base[] = "./senderRoot";
+const int INTIAL_RTO = 1000000;
 
 bool threeWayHandShake(Channel &ch, unsigned short& windowSize, string& fileName)
 {
@@ -16,6 +17,7 @@ bool threeWayHandShake(Channel &ch, unsigned short& windowSize, string& fileName
     char buf[MAX_PAYLOAD_SIZE];
     memset(buf,0,MAX_PAYLOAD_SIZE);
     struct header h;
+    struct header hr;
     // #1 TWH: use Crecvfrom to read incoming request; setup client IP and port
     // wait for three-way hand shake
     if(ch.Crecvfrom(buf,MAX_PAYLOAD_SIZE-1,&h)<0) {
@@ -45,19 +47,24 @@ bool threeWayHandShake(Channel &ch, unsigned short& windowSize, string& fileName
     h.type = SYN;
     h.checksum = 0xbeef;
     h.windowSize = windowSize;
-    ch.Csend(buf,strlen(buf),&h);
+    ch.Csend(NULL, 0, &h);
     
-    // #3 TWH: wait for reqeust from receiver
+    // #3 TWH: wait for file reqeust from receiver
     memset(buf,0,MAX_PAYLOAD_SIZE);
-    ch.Crecv(buf, MAX_PAYLOAD_SIZE, &h);
-    
+    while (ch.CrecvTimeout(buf, MAX_PAYLOAD_SIZE, &hr, INTIAL_RTO) < 0) {
+        memset(buf,0,MAX_PAYLOAD_SIZE);
+        ch.Csend(NULL,0,&h);
+        cerr << "Sender: TWH time out" << endl;
+    }
+    cerr << "Sender: Get File Name" << endl;
     string temp(buf);
     fileName = temp;
+    
     
     return true;
 }
 
-bool prepareForData(string fileName, vector<char*>& dataSequence)
+bool prepareForData(string fileName, vector<char*>& dataSequence, int& lastpacketSize)
 {
     //create URL
     ifstream inFile;
@@ -98,6 +105,7 @@ bool prepareForData(string fileName, vector<char*>& dataSequence)
     if ((signed int)(numberOfPacket * MAX_PAYLOAD_SIZE) < fileSize)
     {
         int offset = fileSize - numberOfPacket * MAX_PAYLOAD_SIZE;
+        lastpacketSize = offset;
         char *buf = new char[offset];
         inFile.read(buf, offset);
         dataSequence.push_back(buf);
@@ -107,6 +115,35 @@ bool prepareForData(string fileName, vector<char*>& dataSequence)
     return true;
 }
 
+void resendPackets(Channel& ch, vector<char*>& data, int start, int end, int numberOfPacket, int offset, int window)
+{
+    if (end > numberOfPacket - 1) {
+        cerr << "Sender: " << end << " > " << numberOfPacket - 1 << endl;
+        end = numberOfPacket - 1;
+    }
+    if (start < 0) {
+        cerr << "Sender: " << start << " < " << "0" << endl;
+        start = 0;
+    }
+    cerr <<"*********************" << endl;
+    cerr <<"Resend packet from " << start << " to " << end << endl;
+    for (int i = start; i <= end; i++)
+    {
+        struct header h;
+        h.type = DAT;
+        h.sequence = i;
+        h.windowSize = window;
+        if (end == numberOfPacket - 1) {
+            h.checksum = CheckSum(data[i], offset);
+            ch.Csend(data[i], offset, &h);
+        } else {
+            h.checksum = CheckSum(data[i], MAX_PAYLOAD_SIZE);
+            ch.Csend(data[i], MAX_PAYLOAD_SIZE, &h);
+        }
+        cerr << "Sender: resend packet " << i << endl;
+    }
+    cerr << "*********************" << endl;
+}
 int main(int argc, char* argv[])
 {
     const string usage("usage: sender [port number]");
@@ -128,8 +165,8 @@ int main(int argc, char* argv[])
     }
 
     // Setup communication channel and bind port
-    // FIXME: do simulation later
-    Channel ch;
+    // do simulation here
+    Channel ch (0.1, 0.1);
     ch.bindPort(portNumber,FAILFAST);
 
     // flow control: windowSize is determined by receiver
@@ -145,7 +182,8 @@ int main(int argc, char* argv[])
     // else return a vector of data with MAX_PAY_LOAD SIZE for each
     vector <char*> data;
     struct header h;
-    if (!prepareForData(fileName, data))
+    int lastpacketSize = MAX_PAYLOAD_SIZE;
+    if (!prepareForData(fileName, data, lastpacketSize))
     {
         cerr << "Sender: Bad request of File" <<endl;
         h.sequence = -1;
@@ -160,35 +198,100 @@ int main(int argc, char* argv[])
     //establish reliable data transfer
     int numberOfPacket = data.size();
     int ackedPtr = 0;
-    for (int i = 0; ackedPtr < numberOfPacket; i++)
+    int lastAcked = -1;
+    int dupAckCounter = 0;
+    
+    for (int i = 0; lastAcked < numberOfPacket - 1;)
     {
-        while (ackedPtr + windowSize <= i) {
+        while ((ackedPtr + windowSize < i || (i == numberOfPacket && lastAcked < numberOfPacket - 1) )|| (numberOfPacket < windowSize && lastAcked < numberOfPacket - 1 && i == numberOfPacket)) {
             char buf[MAX_PAYLOAD_SIZE];
             memset(buf, 0, MAX_PAYLOAD_SIZE);
-            ch.Crecv(buf, MAX_PAYLOAD_SIZE, &h);
-            if (h.type == ACK && h.sequence == ackedPtr)
-            { 
-                cerr << "Sender: get ACK " << h.sequence << endl;
-	        ackedPtr++;
+            int result = -1;
+            while (result < 0)
+            {
+                result = ch.CrecvTimeout(buf, MAX_PAYLOAD_SIZE, &h, INTIAL_RTO);
+             
+                if (result == -2) continue;
+                if (result == -3) {
+                    memset(buf, 0, MAX_PAYLOAD_SIZE);
+                    // start retransimission
+                    cerr << "Sender: Data time out." << endl;
+                    resendPackets(ch, data, ackedPtr, i - 1, numberOfPacket, lastpacketSize, windowSize);
+                }
+            }
+            if (h.type == ACK) {
+                // record the sequence number of ACK
+                // trigger retrainsimission when receive the 3rd dup ack
+                if (lastAcked == h.sequence ) {
+                    dupAckCounter++;
+                    if (dupAckCounter == 3) {
+                        cerr << "Sender: receive the 3rd dupACK " << lastAcked << endl;
+                        // start retransimission
+                        resendPackets(ch, data, ackedPtr, i - 1 , numberOfPacket, lastpacketSize, windowSize);
+                    }
+                }
+                
+                //increment ackedPTR when receive expeceted ACK
+                if (h.sequence == ackedPtr + 1) {
+                    cerr << "Sender: get ACK " << h.sequence << endl;
+                    lastAcked = ackedPtr;
+                    dupAckCounter = 0;
+                    ackedPtr++;
+                } else if (h.sequence == i) {//leap window forward when get outboudn ACK
+                    cerr << "Sender: get ACK " << h.sequence << endl;
+                    ackedPtr = h.sequence;
+                    lastAcked = h.sequence - 1;
+                    dupAckCounter = 0;
+                }
             }
         } 
         if (i < numberOfPacket) {
             h.type = DAT;
-            h.checksum = 0xbbbb;	// FIXME: use CheckSum
             h.windowSize = windowSize;
             h.sequence = i;
-            ch.Csend(data[i], MAX_PAYLOAD_SIZE, &h);
+            
+            if (i == numberOfPacket - 1) {
+                h.checksum = CheckSum(data[i],lastpacketSize);
+                ch.Csend(data[i], lastpacketSize, &h);
+            } else {
+                h.checksum = CheckSum(data[i],MAX_PAYLOAD_SIZE);
+                ch.Csend(data[i], MAX_PAYLOAD_SIZE, &h);
+            }
             cerr << "Sender: send packet " << i << endl;
+            i++;
         }
     }
 
     // file transmission complete: send FIN
+    cerr << "Sender: send FIN" << endl;
     h.type = FIN;
     h.checksum = 0xdddd;
     h.windowSize = windowSize;
     h.sequence = -1;
     ch.Csend(NULL, 0, &h);
 
-    //wait for FIN from receiver
+    //if resendCounter becomes 3. Assume file transimission completed
+    int resendCounter = 0;
+    //wait for FIN from receive
+    do {
+        cerr << "Sender: Wait for FIN" << endl;
+        char buf[MAX_PAYLOAD_SIZE];
+        memset(buf, 0, MAX_PAYLOAD_SIZE);
+        struct header hr;
+        int result = ch.CrecvTimeout(buf, MAX_PAYLOAD_SIZE, &hr, INTIAL_RTO);
+        if (result == -2) continue;
+        else if (result == -3) {
+            cerr << "Sender: resend FIN" << endl;
+            ch.Csend(NULL, 0, &h);
+            resendCounter++;
+            if (resendCounter == 3) {
+                cerr <<"Sender: FIN wait Time out" << endl;
+                break;
+            }
+        } else if (hr.type == FIN) {
+            cerr << "Sender: Get FIN" << endl;
+            break;
+        }
+    } while(true);
     return 0;
 }

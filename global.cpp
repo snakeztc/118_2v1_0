@@ -42,14 +42,12 @@ string getHeaderTypeName(PacketType t)
 
 void echoHeader(struct header *h)
 {
-    cerr<< "---- Echo HEADER ----" << endl;
-    cerr<< "sequence: " << h->sequence << endl;
-    cerr<< "type:     " << getHeaderTypeName(h->type) << endl;
-    cerr<< "checksum: ";
-    fprintf(stderr,"%x",h->checksum);
-    cerr<< endl;
-    cerr<< "Window size is: " << h->windowSize << endl;
-    cerr<< "---- END HEADER ----" << endl;
+    cout<< "---- Echo HEADER ----" << endl;
+    cout<< "sequence: " << h->sequence << endl;
+    cout<< "type:     " << getHeaderTypeName(h->type) << endl;
+    cout<< "checksum: " << hex << h->checksum << endl;
+    cout<< "Window size is: " << h->windowSize << endl;
+    cout<< "---- END HEADER ----" << endl;
 }
 
 void fillHeaderStr(char* hdstr, const struct header* hdptr)

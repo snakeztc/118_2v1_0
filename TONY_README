@@ -20,3 +20,7 @@ Here are some of my questions. Post all your questions in the following section:
 2. Timed wait?
 3. Should host name only be IP address (dotted)?
 --- END
+
+parts not fully implemented
+1. checksum for packet that only has header					#DONE
+2. if the last FIN from receiver is lost, how long should I wait?

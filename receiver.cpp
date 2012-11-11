@@ -9,7 +9,7 @@ using namespace std;
 
 const unsigned short MAX_WINDOW_SIZE = 4;
 const char base[] = "./receiverRoot";
-
+const int INTIAL_RTO = 10000000;
 
 bool threeWayHandShake(Channel &ch, string filename)
 {
@@ -27,16 +27,25 @@ bool threeWayHandShake(Channel &ch, string filename)
     h1.checksum = CheckSum(filename.c_str(),filename.length()+1);
     h1.windowSize = MAX_WINDOW_SIZE;
 
+    struct header hr;
     // #1 TWH: receiver sends file request to the sender
     ch.Csend(NULL, 0, &h);
     
-    // waiting for SYN back from sender
+
+    // #2 TWH: wait for syn from sender
     char buf[MAX_PAYLOAD_SIZE];
-    memset(buf,0,MAX_PAYLOAD_SIZE);
-    
-    // #2 TWH: receive SYN from sender
-    ch.Crecv(buf,MAX_PAYLOAD_SIZE-1,&h);
-    
+    while (true)
+    {
+        memset(buf,0,MAX_PAYLOAD_SIZE);
+        int result = ch.CrecvTimeout(buf, MAX_PAYLOAD_SIZE, &hr, INTIAL_RTO);
+        if(result == -2) continue;
+        else if(result == -3) {
+            cerr << "Receiver: resend SYN" << endl;
+            ch.Csend(NULL, 0, &h);
+        } else {
+            break;
+        }
+    }
     cerr << "Reply from sender: " << string(buf) << endl;
     
     // echo response
@@ -51,6 +60,17 @@ bool threeWayHandShake(Channel &ch, string filename)
     // #3 THW: send file rquest
     ch.Csend(filename.c_str(),filename.length()+1,&h1);
     return true;
+}
+
+void resendACK(Channel &ch, int expected)
+{
+    struct header h;
+    h.type = ACK;
+    h.sequence = expected;
+    h.checksum = 0xaaaa;
+    h.windowSize = MAX_WINDOW_SIZE;
+    ch.Csend(NULL,0,&h);
+    cerr << "Resend ACK " << expected << endl;
 }
 
 int main(int argc, char* argv[])
@@ -83,7 +103,7 @@ int main(int argc, char* argv[])
     cerr << "----------------------------------" << endl; 
     
     // setup communication channel
-    Channel ch;
+    Channel ch(0.1,0.1);
     while (ch.bindPort(portNumber,NORMAL)==false)
     {
         portNumber++;
@@ -107,17 +127,34 @@ int main(int argc, char* argv[])
     // get ACK: establish data transfer
     // receive data until getting a FIN: send FINACK and shut down
     vector <char *> data;
+    vector <unsigned int> datasize;
+    int expectedPacket = 0;
     while (true) {
         struct header h;
         char *buf = new char[MAX_PAYLOAD_SIZE];
         memset(buf,0,MAX_PAYLOAD_SIZE);
-        ch.Crecv(buf,MAX_PAYLOAD_SIZE,&h); 
+        unsigned int size = 0;
+        int result = 0;
+        do {
+            result = ch.CrecvTimeout(buf,MAX_PAYLOAD_SIZE,&h, INTIAL_RTO);
+            //if time out resend ACK
+            if (result < 0) {
+                resendACK(ch, expectedPacket);
+            }
+        } while(result < 0);
+        size = (unsigned int) result;
+     
         if (h.type == DAT) {
-           //save data
-           data.push_back(buf);
-           cerr << "Receiver: get packet " << h.sequence << endl;          
-
+           if (h.sequence == expectedPacket)
+           {
+               //save data
+               data.push_back(buf);
+               datasize.push_back(size);
+               expectedPacket++;
+               cerr << "Receiver: get packet " << h.sequence << endl;          
+           }
            //send back ACK
+           h.sequence = expectedPacket;
            h.type = ACK;
            h.windowSize = MAX_WINDOW_SIZE;
            h.checksum = 0xaaaa;
@@ -128,12 +165,30 @@ int main(int argc, char* argv[])
         } //receive FIN Pacet, save file to root and quit
         else if (h.type == FIN) {
             cerr << "Receiver: file transmission complete" << endl;
+            //send a FIN BACK to confirm
+            h.sequence = -1;
+            h.type = FIN;
+            h.windowSize = MAX_WINDOW_SIZE;
+            h.checksum = 0xaaaa;
+            cerr << "Receiver: reply FIN" << endl;
+            ch.Csend(NULL, 0, &h);
+            //FIXME if this packet is lost
+            //push data to app layer
             ofstream outfile (filename.c_str());
             for (unsigned int i = 0; i < data.size(); i++)
             {
-                outfile.write(data[i], MAX_PAYLOAD_SIZE);
+                outfile.write(data[i], datasize[i]);
             }
             break;
+        } else {
+            cerr << "Receiver: receive SYN" << endl;
+            //resend GET message
+            struct header hg;
+            hg.sequence = -1;
+            hg.type = GET;
+            hg.checksum = CheckSum(filename.c_str(), filename.length()+1);
+            hg.windowSize = MAX_WINDOW_SIZE;
+            ch.Csend(filename.c_str(), filename.length()+1, &hg);
         }
      
         //echoHeader(&h);
